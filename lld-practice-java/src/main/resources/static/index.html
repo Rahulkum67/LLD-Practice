@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LLD Practice</title>
+<style>
+:root{--bg:#eef2f4;--ink:#14232b;--mut:#5b6b73;--line:#cfd8dc;--acc:#0b6e6e;--bad:#b3261e;--warn:#9a6700;--ok:#1b7f3b;--card:#fff}
+*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+header{padding:14px 20px;background:var(--ink);color:#fff;font-weight:600}
+main{display:grid;grid-template-columns:220px minmax(0,1fr) 340px;gap:16px;padding:16px;max-width:1300px;margin:auto}
+@media(max-width:1000px){main{grid-template-columns:1fr}}
+section{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:14px}
+h2{font-size:16px;margin:0 0 8px}h3{font-size:14px;margin:12px 0 4px}
+.prob{display:block;width:100%;text-align:left;padding:8px;margin-bottom:6px;border:1px solid var(--line);background:#fff;border-radius:4px;cursor:pointer}
+.prob.on{border-color:var(--acc);background:#e3f2f2}.prob small{display:block;color:var(--mut)}
+textarea{width:100%;height:300px;font:13px/1.4 ui-monospace,Menlo,monospace;padding:8px;border:1px solid var(--line);border-radius:4px}
+button.p{background:var(--acc);color:#fff;border:0;padding:8px 14px;border-radius:4px;cursor:pointer;font-weight:600}
+button:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+button:disabled{opacity:.5}select{padding:6px}.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
+.f{border-left:4px solid var(--line);padding:4px 8px;margin:6px 0}.f.issue{border-color:var(--bad)}.f.warning{border-color:var(--warn)}.f.strength{border-color:var(--ok)}
+.f em{display:block;color:var(--mut);font-style:normal}.mut{color:var(--mut)}.err{color:var(--bad)}
+.bar{height:6px;background:var(--line);border-radius:3px}.bar i{display:block;height:100%;background:var(--acc);border-radius:3px}
+.h{padding:6px 0;border-top:1px solid var(--line);cursor:pointer}
+</style></head><body>
+<header>LLD Practice</header>
+<main>
+<section><h2>Problems</h2><div id="probs"></div></section>
+<section id="work"><p class="mut">Pick a problem to begin.</p></section>
+<section><h2>Feedback</h2><div id="fb" class="mut">Submit an attempt to see feedback.</div><h2 style="margin-top:18px">Your attempts</h2><div id="hist" class="mut">None yet.</div></section>
+</main>
+<script>
+const L=localStorage.getItem('lld_learner')||('learner-'+Math.random().toString(36).slice(2,8));try{localStorage.setItem('lld_learner',L)}catch(e){}
+let prob=null,att=null,cfg={formats:['outline'],ai_enabled:false},poll=null;
+const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api=async(m,u,b)=>{const r=await fetch(u,{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined});const j=await r.json();if(!r.ok)throw new Error(j.error||r.statusText);return j};
+const TPL={outline:"// One block per class. Members start with + - #\ninterface PricingStrategy\n  + calculate(ticket): Money\nclass HourlyPricing implements PricingStrategy\nclass ParkingLot\n  - floors: List[Floor]\n  + park(vehicle): Ticket\n",java:"interface PricingStrategy {\n    Money calculate(Ticket t);\n}\n\nclass HourlyPricing implements PricingStrategy {\n    public Money calculate(Ticket t) { return null; }\n}\n"};
+async function init(){cfg=await api('GET','/api/config');const ps=await api('GET','/api/problems');
+$('probs').innerHTML=ps.map(p=>`<button class="prob" data-id="${p.id}">${esc(p.title)}<small>${p.difficulty}</small></button>`).join('');
+document.querySelectorAll('.prob').forEach(b=>b.onclick=()=>pick(b.dataset.id))}
+async function pick(id){prob=await api('GET','/api/problems/'+id);att=null;
+document.querySelectorAll('.prob').forEach(b=>b.classList.toggle('on',b.dataset.id===id));
+$('work').innerHTML=`<h2>${esc(prob.title)}</h2><p>${esc(prob.summary)}</p><ul>${prob.requirements.map(r=>`<li>${esc(r)}</li>`).join('')}</ul>
+<div class="row"><label>Format <select id="fmt">${cfg.formats.map(f=>`<option>${f}</option>`).join('')}</select></label>
+<button class="p" id="go">Start attempt</button><span id="msg" class="err"></span></div><div id="ed"></div>`;
+$('go').onclick=start;$('fb').textContent='Submit an attempt to see feedback.';loadHist()}
+async function start(){try{att=await api('POST','/api/attempts',{learner_id:L,problem_id:prob.id,format:$('fmt').value});
+$('ed').innerHTML=`<p class="mut">Attempt #${att.number}. Describe your classes, interfaces and relationships.</p><textarea id="src" aria-label="Your design">${esc(TPL[att.fmt]||'')}</textarea>
+<div class="row"><button class="p" id="sub">Submit for feedback</button><span id="msg2" class="err"></span></div>`;
+$('sub').onclick=submit;loadHist()}catch(e){$('msg').textContent=e.message}}
+async function submit(){$('msg2').textContent='';try{await api('PUT','/api/attempts/'+att.id,{content:$('src').value});
+att=await api('POST','/api/attempts/'+att.id+'/submit');$('sub').disabled=true;track()}catch(e){$('msg2').textContent=e.message}}
+function track(){clearInterval(poll);const tick=async()=>{att=await api('GET','/api/attempts/'+att.id);render(att);
+if(['evaluated','failed'].includes(att.status)){clearInterval(poll);loadHist()}};tick();poll=setInterval(tick,1200)}
+async function render(a){const el=$('fb');
+if(a.status==='failed'){el.innerHTML=`<p class="err">Evaluation failed: ${esc(a.error)}</p><button class="p" id="rt">Retry evaluation</button>`;$('rt').onclick=async()=>{att=await api('POST','/api/attempts/'+a.id+'/retry');track()};return}
+if(a.status!=='evaluated'){el.innerHTML='<p>Evaluating…</p>';return}
+const fb=a.feedback,d=await api('GET','/api/attempts/'+a.id+'/delta');
+el.innerHTML=`<p><b>${esc(fb.summary)}</b></p>`+(fb.notes.map(n=>`<p class="err">${esc(n)}</p>`).join(''))
++Object.entries(fb.scores).map(([k,v])=>`<div>${k} ${v}<div class="bar"><i style="width:${v}%"></i></div></div>`).join('')
++(d?`<h3>Since attempt #${d.previous_attempt}</h3><p class="mut">${d.resolved.length} resolved, ${d.new.length} new, ${d.persisting.length} still open</p>`:'')
++fb.findings.map(f=>`<div class="f ${f.severity}">${esc(f.message)}${f.suggestion?`<em>${esc(f.suggestion)}</em>`:''}<em>${esc(f.source)} · ${esc(f.category)}</em></div>`).join('')
++(cfg.ai_enabled?'':'<p class="mut">AI review is off (no API key), so this feedback is rule-based only.</p>')}
+async function loadHist(){if(!prob)return;const hs=await api('GET',`/api/attempts?learner_id=${L}&problem_id=${prob.id}`);
+$('hist').innerHTML=hs.length?hs.slice().reverse().map(h=>`<div class="h" data-id="${h.id}">#${h.number} · ${h.status}${h.feedback?' · '+esc(h.feedback.summary):''}</div>`).join(''):'None yet.';
+document.querySelectorAll('.h').forEach(e=>e.onclick=async()=>{att=await api('GET','/api/attempts/'+e.dataset.id);render(att)})}
+init();
+</script></body></html>
